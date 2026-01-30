@@ -21,7 +21,9 @@ terraform {
 # Provider Configuration
 # -----------------------------------------------------------------------------
 provider "aws" {
-  region = var.aws_region
+  region     = var.aws_region
+  access_key = var.aws_access_key
+  secret_key = var.aws_secret_key
 }
 
 # -----------------------------------------------------------------------------
@@ -131,6 +133,15 @@ resource "aws_security_group" "app" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Django API
+  ingress {
+    description = "Django API"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Outbound
   egress {
     from_port   = 0
@@ -146,12 +157,31 @@ resource "aws_security_group" "app" {
 }
 
 # -----------------------------------------------------------------------------
+# SSH Key Generation
+# -----------------------------------------------------------------------------
+resource "tls_private_key" "ssh_key" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "aws_key_pair" "deployer" {
+  key_name   = "${var.project_name}-key"
+  public_key = tls_private_key.ssh_key.public_key_openssh
+}
+
+resource "local_file" "private_key" {
+  content  = tls_private_key.ssh_key.private_key_pem
+  filename = "${path.module}/ssh_keys/${var.project_name}-key.pem"
+  file_permission = "0400"
+}
+
+# -----------------------------------------------------------------------------
 # EC2 Instance (Free Tier: t2.micro)
 # -----------------------------------------------------------------------------
 resource "aws_instance" "app" {
   ami                    = data.aws_ami.amazon_linux.id
   instance_type          = var.instance_type
-  key_name               = var.key_name
+  key_name               = aws_key_pair.deployer.key_name
   vpc_security_group_ids = [aws_security_group.app.id]
   subnet_id              = aws_subnet.public.id
 

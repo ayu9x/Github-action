@@ -26,3 +26,6 @@ dist-ssr/
 # OS
 .DS_Store
 Thumbs.db
+
+terraform/ssh_keys/
+terraform.tfvars
