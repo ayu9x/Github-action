@@ -1,0 +1,138 @@
+# =============================================================================
+# CI/CD Pipeline - DevOps Assessment Application
+# =============================================================================
+# Triggers on push to main branch:
+#   1. Builds Docker images for backend and frontend
+#   2. Pushes images to Docker Hub
+#   3. Deploys to server (via SSH or self-hosted runner)
+# =============================================================================
+
+name: Build, Push & Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Manual trigger
+
+env:
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  IMAGE_PREFIX: ${{ secrets.DOCKER_USERNAME }}/devops-assessment
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build and Push Docker Images
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Docker Hub secrets
+        run: |
+          if [ -z "${{ secrets.DOCKER_USERNAME }}" ] || [ -z "${{ secrets.DOCKER_TOKEN }}" ]; then
+            echo "❌ ERROR: Docker Hub secrets are not configured!"
+            echo ""
+            echo "Please add the following secrets to your GitHub repository:"
+            echo "  1. Go to: https://github.com/ayu9x/Github-action/settings/secrets/actions"
+            echo "  2. Add 'DOCKER_USERNAME' - Your Docker Hub username"
+            echo "  3. Add 'DOCKER_TOKEN' - Your Docker Hub access token"
+            echo ""
+            echo "To create a Docker Hub access token:"
+            echo "  1. Go to: https://hub.docker.com/settings/security"
+            echo "  2. Click 'New Access Token'"
+            echo "  3. Give it a name and copy the token"
+            exit 1
+          fi
+          echo "✅ Docker Hub secrets are configured"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build and push Backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-backend:latest
+            ${{ env.IMAGE_PREFIX }}-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-frontend:latest
+            ${{ env.IMAGE_PREFIX }}-frontend:${{ github.sha }}
+          build-args: |
+            VITE_API_URL=
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Deploy to Server (Optional - requires SSH secrets)
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: ${{ vars.ENABLE_DEPLOYMENT == 'true' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /opt/devops-assessment
+            
+            # Pull latest images
+            docker pull ${{ env.IMAGE_PREFIX }}-backend:latest
+            docker pull ${{ env.IMAGE_PREFIX }}-frontend:latest
+            
+            # Update docker-compose with new images
+            docker-compose down
+            docker-compose up -d
+            
+            # Cleanup old images
+            docker image prune -f
+
+  # ---------------------------------------------------------------------------
+  # Local Deployment (Self-hosted runner alternative)
+  # ---------------------------------------------------------------------------
+  deploy-local:
+    name: Deploy Local (Self-hosted)
+    runs-on: self-hosted
+    needs: build-and-push
+    if: ${{ vars.ENABLE_LOCAL_DEPLOYMENT == 'true' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull and deploy
+        run: |
+          docker pull ${{ env.IMAGE_PREFIX }}-backend:latest
+          docker pull ${{ env.IMAGE_PREFIX }}-frontend:latest
+          docker-compose down || true
+          docker-compose up -d

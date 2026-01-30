@@ -1,0 +1,4 @@
+Django>=5.0,<7.0
+django-cors-headers>=4.3.0
+gunicorn>=21.0.0
+whitenoise>=6.5.0
